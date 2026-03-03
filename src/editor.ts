@@ -178,32 +178,38 @@ function getSnippetsKey(logstashContext: LogstashContext): string {
 /**
  * Create and return a new CompletionItem from 'baseCompletionItem', with a custom replacement range
  */
-function createCompletionItemSnippet(baseCompletionItem: CompletionItem, line: TextLine, snippetOption: string): CompletionItem {
-	const newCompletionItem = new CompletionItem(baseCompletionItem.label + ' snippet', baseCompletionItem.kind);
-	newCompletionItem.insertText = baseCompletionItem.insertText;
-	newCompletionItem.documentation = baseCompletionItem.documentation;
-	newCompletionItem.sortText = baseCompletionItem.sortText;
-	const snippetReplacementStart = line.text.indexOf(snippetOption);
-	newCompletionItem.filterText = line.text.substring(snippetReplacementStart);
-	const startPosition = new Position(line.range.start.line, snippetReplacementStart);
-	newCompletionItem.range = new Range(startPosition, line.range.end);
-	return newCompletionItem;
+function createCompletionItemSnippet(baseCompletionItem: CompletionItem, lineText: string, lineNumber: number, snippetOption: string): CompletionItem {
+  const snippetReplacementStart = lineText.indexOf(snippetOption);
+  return {
+    label:            String(baseCompletionItem.label) + ' snippet',
+    kind:             baseCompletionItem.kind,
+    insertText:       baseCompletionItem.insertText,
+    insertTextFormat: InsertTextFormat.Snippet,
+    documentation:    baseCompletionItem.documentation,
+    sortText:         baseCompletionItem.sortText,
+    filterText:       lineText.substring(snippetReplacementStart),
+    // plain object instead of new Range() / new Position()
+    range: {
+      start: { line: lineNumber, character: snippetReplacementStart },
+      end:   { line: lineNumber, character: lineText.length },
+    },
+  };
 }
-
 /**
  * create return a 'No suggestions' item list, when no completion is available
  */
 function getNoSuggestionCompletionItems(): CompletionItem[] {
-	const enableDefaultVSCodeCompletion = workspace.getConfiguration().get(LOGSTASH_ENABLE_DEFAULT_VSCODE_COMPLETION_CONFIG_NAME, false);
-	if (enableDefaultVSCodeCompletion) {
-		return [];
-	}
-	else {
-		const noSuggestionCompletionItem = new CompletionItem('No suggestions.');
-		noSuggestionCompletionItem.insertText = '';
-		noSuggestionCompletionItem.filterText = '';
-		return [noSuggestionCompletionItem];
-	}
+  const enableDefaultVSCodeCompletion = workspace.getConfiguration().get(LOGSTASH_ENABLE_DEFAULT_VSCODE_COMPLETION_CONFIG_NAME, false);
+  if (enableDefaultVSCodeCompletion) {
+    return [];
+  }
+  else {
+    return [{
+      label:      'No suggestions.',
+      insertText: '',
+      filterText: '',
+    }];
+  }
 }
 
 /**
@@ -214,7 +220,11 @@ export const logstashCompletionItemProvider: CompletionItemProvider = {
 	provideCompletionItems(document: TextDocument, position: Position, token: CancellationToken, context: CompletionContext): CompletionItem[] {
 
 		// check if current line has completion available
-		let currentLinePrefix = document.lineAt(position).text.substring(0, position.character);
+    const lineText = document.getText({
+      start: { line: position.line, character: 0 },
+      end:   { line: position.line, character: 10000 }
+    });
+    let currentLinePrefix = lineText.substring(0, position.character);
 		let currentOptionPrefix = '';
 		if (!currentLinePrefix.match(COMPLETION_AVAILABLE_PREFIX_REGEX)) {
 			const optionSnippetMatches = currentLinePrefix.match(OPTION_SNIPPET_COMPLETION_AVAILABLE_PREFIX_REGEX);
@@ -257,7 +267,12 @@ export const logstashCompletionItemProvider: CompletionItemProvider = {
 			if (logstashContext.plugin && currentOptionPrefix) {
 				const snippetCompletionItem = allSnippets.find(snippet => snippet.label === currentOptionPrefix);
 				if (snippetCompletionItem) {
-					allSnippets = [ createCompletionItemSnippet(snippetCompletionItem, document.lineAt(position), currentOptionPrefix) ];
+          const lineText = document.getText({
+            start: { line: position.line, character: 0 },
+            end:   { line: position.line, character: 10000 }
+          });
+          allSnippets = [ createCompletionItemSnippet(snippetCompletionItem, lineText, position.line, currentOptionPrefix) ];
+
 				}
 				else {
 					allSnippets = [];
@@ -288,26 +303,56 @@ export const logstashCompletionItemProvider: CompletionItemProvider = {
  * HoverProvider providing documentation when hover over a logstash token (section, plugin, option)
  */
 export const logstashHoverProvider: HoverProvider = {
-	provideHover(document: TextDocument, position: Position, token: CancellationToken) {
+  provideHover(document: TextDocument, position: Position, token: CancellationToken) {
 
-		// get current Logstash item (if any)
-		const logstashCurrentItemRange = document.getWordRangeAtPosition(position, /\w+/);
-		if (!logstashCurrentItemRange) {
-			return undefined;
-		}
-		const logstashCurrentItem = document.getText(logstashCurrentItemRange);
+    // manually find the word at cursor position (replaces document.getWordRangeAtPosition)
+    const line = document.getText({
+      start: { line: position.line, character: 0 },
+      end:   { line: position.line, character: 10000 }
+    });
 
-		// get completion items given current position
-		const completionContext: CompletionContext = { triggerKind: CompletionTriggerKind.Invoke };
-		const completionItems = logstashCompletionItemProvider.provideCompletionItems(document, position, token, completionContext);
+    const wordRegex = /\w+/g;
+    let match;
+    let logstashCurrentItem: string | undefined;
+    let logstashCurrentItemRange: Range | undefined;
 
-		// find the completion item where cursor is present (if any)
-		const foundCompletionItem = (<CompletionItem[]>completionItems).find(completionItem => completionItem.filterText === logstashCurrentItem);
-		if (!foundCompletionItem || !foundCompletionItem.documentation) {
-			return undefined;
-		}
+    while ((match = wordRegex.exec(line)) !== null) {
+      if (match.index <= position.character &&
+          position.character <= match.index + match[0].length) {
+        logstashCurrentItem = match[0];
+        logstashCurrentItemRange = {
+          start: { line: position.line, character: match.index },
+          end:   { line: position.line, character: match.index + match[0].length },
+        };
+        break;
+      }
+    }
 
-		// return hover information on current position item
-		return new Hover(foundCompletionItem.documentation, logstashCurrentItemRange);
-	}
+    if (!logstashCurrentItem || !logstashCurrentItemRange) {
+      return undefined;
+    }
+
+    // get completion items for current position
+    const completionContext: CompletionContext = {
+      triggerKind: CompletionTriggerKind.Invoke,
+    };
+    const completionItems = logstashCompletionItemProvider.provideCompletionItems(
+      document, position, token, completionContext
+    );
+
+    // find matching item
+    const foundCompletionItem = (completionItems as CompletionItem[])
+      .find(item => item.filterText === logstashCurrentItem);
+
+    if (!foundCompletionItem || !foundCompletionItem.documentation) {
+      return undefined;
+    }
+
+    return {
+      contents: foundCompletionItem.documentation,
+      range:    logstashCurrentItemRange,
+    };
+  }
 };
+
+// vim: set expandtab ts=4 sw=4:

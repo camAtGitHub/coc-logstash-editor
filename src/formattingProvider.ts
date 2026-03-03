@@ -1,10 +1,8 @@
 import {
 	DocumentFormattingEditProvider,
 	DocumentRangeFormattingEditProvider,
-	TextDocument,
-	TextLine,
+	LinesTextDocument,
 	Range,
-	Position,
 	FormattingOptions,
 	CancellationToken,
 	TextEdit,
@@ -36,8 +34,8 @@ function generateExpectedIndentationText(options: FormattingOptions, indentation
 /**
  * Compute and return actual indentation count in provided line
  */
-function computeIndentationFromLine(options: FormattingOptions, line: TextLine): number {
-	let actualIndentationText = line.text.substring(0, line.firstNonWhitespaceCharacterIndex);
+function computeIndentationFromLine(options: FormattingOptions, line: { text: string; firstNonWhitespaceCharacterIndex: number }): number {
+  let actualIndentationText = line.text.substring(0, line.firstNonWhitespaceCharacterIndex);
 	const oneIndentationSpaces = ' '.repeat(options.tabSize);
 	actualIndentationText = actualIndentationText.replace(TABS_REGEX, oneIndentationSpaces);
 	return Math.floor(actualIndentationText.length / options.tabSize);
@@ -46,11 +44,11 @@ function computeIndentationFromLine(options: FormattingOptions, line: TextLine):
 /**
  * Compute and return full text document range from first character to last character
  */
-function getFullRange(document: TextDocument): Range {
-	return new Range(
-		new Position(0, 0),
-		document.lineAt(document.lineCount - 1).range.end
-	);
+function getFullRange(document: LinesTextDocument): Range {
+  return {
+    start: { line: 0, character: 0 },
+    end:   { line: document.lineCount - 1, character: getLineInfo(document, document.lineCount - 1).text.length },
+  };
 }
 
 /**
@@ -72,21 +70,54 @@ function obfuscateCurlyBraces(contentToObfuscate: string): string {
  * create and return a text range that begins and ends on the same line
  */
 function createLineRange(lineNumber: number, startIndex: number, endIndex: number): Range {
-	const startPosition = new Position(lineNumber, startIndex);
-	const endPosition = new Position(lineNumber, endIndex);
-	return new Range(startPosition, endPosition);
+  return {
+    start: { line: lineNumber, character: startIndex },
+    end:   { line: lineNumber, character: endIndex },
+  };
 }
+
+function teDelete(range: Range): TextEdit {
+  return { range, newText: '' };
+}
+function teReplace(range: Range, newText: string): TextEdit {
+  return { range, newText };
+}
+function teInsert(lineNumber: number, character: number, newText: string): TextEdit {
+  return { range: { start: { line: lineNumber, character }, end: { line: lineNumber, character } }, newText };
+}
+
+
+
+function getLineInfo(document: LinesTextDocument, lineNumber: number): { text: string; firstNonWhitespaceCharacterIndex: number; isEmptyOrWhitespace: boolean; range: Range } {
+  const text = document.getText({
+    start: { line: lineNumber, character: 0 },
+    end:   { line: lineNumber, character: 10000 },
+  });
+  const trimmed = text.trimStart();
+  const firstNonWhitespaceCharacterIndex = text.length - trimmed.length;
+  const isEmptyOrWhitespace = trimmed.length === 0;
+  const range: Range = {
+    start: { line: lineNumber, character: 0 },
+    end:   { line: lineNumber, character: text.length },
+  };
+  return { text, firstNonWhitespaceCharacterIndex, isEmptyOrWhitespace, range };
+}
+
 
 /**
  * parse a specific text range in a document and return text edits to do so that text is nicely formatted
  */
 export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattingEditProvider = {
 
-	provideDocumentRangeFormattingEdits(document: TextDocument, range: Range, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]> {
+	provideDocumentRangeFormattingEdits(document: LinesTextDocument, range: Range, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]> {
 
 		// if range end is at line start, remove range last line
-		if (range.end.character === 0) {
-			return this.provideDocumentRangeFormattingEdits(document, new Range(range.start, new Position(range.end.line - 1, document.lineAt(range.end.line - 1).text.length)), options, token);
+    if (range.end.character === 0) {
+      return this.provideDocumentRangeFormattingEdits(document, {
+        start: range.start,
+        end:   { line: range.end.line - 1, character: getLineInfo(document, range.end.line - 1).text.length },
+      }, options, token);
+
 		}
 
 		// init variables
@@ -98,13 +129,13 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 		// compute initial indentation
 		let indentation = 0;
 		if (currentLineNumber > 0) {
-			indentation = computeIndentationFromLine(options, document.lineAt(currentLineNumber));
+			indentation = computeIndentationFromLine(options, getLineInfo(document, currentLineNumber));
 		}
 
 		while (currentLineNumber <= range.end.line) {
 
 			// get current line
-			const currentLine = document.lineAt(currentLineNumber);
+			const currentLine = getLineInfo(document, currentLineNumber);
 			let currentLineText = currentLine.text;
 
 			// mask quoted strings
@@ -125,7 +156,7 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 			// trailing whitespace: remove it
 			const trailingWhitespaceIndex = currentLineText.search(TRAILING_WHITESPACE_REGEX);
 			if (trailingWhitespaceIndex > -1) {
-				textEdits.push(TextEdit.delete(createLineRange(currentLineNumber, trailingWhitespaceIndex, currentLineText.length) ));
+				textEdits.push(teDelete(createLineRange(currentLineNumber, trailingWhitespaceIndex, currentLineText.length) ));
 			}
 
 			// leading close curly brace: decrement indentation
@@ -166,16 +197,19 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 			const leadingOpenCurlyBraceMatch = currentLineText.match(LEADING_OPEN_CURLY_BRACE_REGEX);
 			if (!inSingleQuoteBlock && !inDoubleQuoteBlock && leadingOpenCurlyBraceMatch) {
 				let previousLineNumber = currentLineNumber - 1;
-				while (previousLineNumber >= 0 && document.lineAt(previousLineNumber).isEmptyOrWhitespace) {
+				while (previousLineNumber >= 0 && getLineInfo(document, previousLineNumber).isEmptyOrWhitespace) {
 					previousLineNumber--;
 				}
 				if (previousLineNumber >= 0) {
 					checkIndentation = false;
 					indentation++;
-					const previousLine = document.lineAt(previousLineNumber);
-					textEdits.push(TextEdit.replace(new Range(previousLine.range.end, new Position(currentLineNumber, leadingOpenCurlyBraceMatch[0].length)), ' {'));
+					const previousLine = getLineInfo(document, previousLineNumber);
+					textEdits.push(teReplace({
+						start: previousLine.range.end,
+						end:   { line: currentLineNumber, character: leadingOpenCurlyBraceMatch[0].length },
+					}, ' {'));
 					if (leadingOpenCurlyBraceMatch[0].length !== currentLine.text.length) {
-						textEdits.push(TextEdit.insert(new Position(currentLineNumber, leadingOpenCurlyBraceMatch[0].length), '\n' + generateExpectedIndentationText(options, indentation)));
+						textEdits.push(teInsert(currentLineNumber, leadingOpenCurlyBraceMatch[0].length, '\n' + generateExpectedIndentationText(options, indentation)));
 					}
 				}
 			}
@@ -188,7 +222,7 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 					(!inDoubleQuoteBlock && !inSingleQuoteBlock && expectedIndentationText !== actualIndentationText)
 					|| ((inDoubleQuoteBlock || inSingleQuoteBlock) && !actualIndentationText.startsWith(expectedIndentationText))
 				) {
-					textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, 0, currentLine.firstNonWhitespaceCharacterIndex), expectedIndentationText));
+					textEdits.push(teReplace(createLineRange(currentLineNumber, 0, currentLine.firstNonWhitespaceCharacterIndex), expectedIndentationText));
 				}
 			}
 
@@ -202,11 +236,11 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 					const operatorIndex = currentLineText.indexOf('=>', setterOperatorMatch.index);
 					const operatorPrefix = currentLineText.substring(setterOperatorMatch.index, operatorIndex);
 					if (operatorPrefix !== ' ') {
-						textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, setterOperatorMatch.index, operatorIndex), ' '));
+						textEdits.push(teReplace(createLineRange(currentLineNumber, setterOperatorMatch.index, operatorIndex), ' '));
 					}
 					const operatorSuffix = currentLineText.substring(operatorIndex + 2, setterOperatorMatch.index + setterOperatorMatch[0].length);
 					if (operatorSuffix !== ' ') {
-						textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, operatorIndex + 2, setterOperatorMatch.index + setterOperatorMatch[0].length), ' '));
+						textEdits.push(teReplace(createLineRange(currentLineNumber, operatorIndex + 2, setterOperatorMatch.index + setterOperatorMatch[0].length), ' '));
 					}
 				}
 
@@ -220,7 +254,7 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 					if (openCurlyBraceMatch[0].charAt(0) !== '>') {
 						const openCurlyBracePatternStart = openCurlyBraceMatch[0].substring(1, openCurlyBraceIndex);
 						if (openCurlyBracePatternStart !== ' ') {
-							textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, openCurlyBraceMatch.index + 1, openCurlyBraceMatch.index + openCurlyBraceIndex), ' '));
+							textEdits.push(teReplace(createLineRange(currentLineNumber, openCurlyBraceMatch.index + 1, openCurlyBraceMatch.index + openCurlyBraceIndex), ' '));
 						}
 					}
 					// break line just after (if line end is not reached)
@@ -228,7 +262,7 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 						if (currentLineText.charAt(openCurlyBraceMatch.index + openCurlyBraceMatch[0].length) === '}') {
 							indentation--;
 						}
-						textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, openCurlyBraceMatch.index + openCurlyBraceIndex, openCurlyBraceMatch.index + openCurlyBraceMatch[0].length), '{\n' + generateExpectedIndentationText(options, indentation)));
+						textEdits.push(teReplace(createLineRange(currentLineNumber, openCurlyBraceMatch.index + openCurlyBraceIndex, openCurlyBraceMatch.index + openCurlyBraceMatch[0].length), '{\n' + generateExpectedIndentationText(options, indentation)));
 					}
 				}
 
@@ -240,12 +274,12 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
 					// break line before (if not a leading '}')
 					if (closeCurlyBraceMatch.index !== 0 && currentLineText.charAt(closeCurlyBraceMatch.index - 1) !== '{') {
 						indentation--;
-						textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, closeCurlyBraceMatch.index, closeCurlyBraceMatch.index + closeCurlyBraceIndex), '\n' + generateExpectedIndentationText(options, indentation)));
+						textEdits.push(teReplace(createLineRange(currentLineNumber, closeCurlyBraceMatch.index, closeCurlyBraceMatch.index + closeCurlyBraceIndex), '\n' + generateExpectedIndentationText(options, indentation)));
 					}
 					// break line just after (if line end is not reached)
 					if (closeCurlyBraceMatch.index + closeCurlyBraceMatch[0].length < currentLineText.length) {
 						const indentationOffset = (currentLineText.match(ALL_OPEN_CURLY_BRACES_REGEX) || []).length;
-						textEdits.push(TextEdit.replace(createLineRange(currentLineNumber, closeCurlyBraceMatch.index + closeCurlyBraceIndex, closeCurlyBraceMatch.index + closeCurlyBraceMatch[0].length), '}\n' + generateExpectedIndentationText(options, indentation - indentationOffset)));
+						textEdits.push(teReplace(createLineRange(currentLineNumber, closeCurlyBraceMatch.index + closeCurlyBraceIndex, closeCurlyBraceMatch.index + closeCurlyBraceMatch[0].length), '}\n' + generateExpectedIndentationText(options, indentation - indentationOffset)));
 					}
 				}
 
@@ -276,7 +310,7 @@ export const logstashDocumentRangeFormattingEditProvider: DocumentRangeFormattin
  */
 export const logstashDocumentFormattingEditProvider: DocumentFormattingEditProvider = {
 
-	provideDocumentFormattingEdits(document: TextDocument, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]> {
+	provideDocumentFormattingEdits(document: LinesTextDocument, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]> {
 		return logstashDocumentRangeFormattingEditProvider.provideDocumentRangeFormattingEdits(document, getFullRange(document), options, token);
 	}
 };

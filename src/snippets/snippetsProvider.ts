@@ -11,7 +11,7 @@ const LOGSTASH_VERSION_CONFIG_NAME = 'logstash.version';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageJSON = require('../../package.json');
-const logstashVersionConfig = packageJSON.contributes.configuration[0].properties[LOGSTASH_VERSION_CONFIG_NAME];
+const logstashVersionConfig = packageJSON.contributes.configuration.properties[LOGSTASH_VERSION_CONFIG_NAME];
 
 const snippetsByVersion: Record<string, Record<string, CompletionItem[]>> = {
 	'6.8': snippets68,
