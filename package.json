@@ -1,0 +1,83 @@
+{
+  "name": "coc-logstash-editor",
+  "version": "0.0.1",
+  "description": "Logstash pipeline config completion, hover documentation, and auto-formatting for coc.nvim",
+  "author": "coc-logstash-editor contributors",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "keywords": [
+    "coc.nvim",
+    "logstash",
+    "neovim"
+  ],
+  "engines": {
+    "coc": "^0.0.82"
+  },
+  "scripts": {
+    "watch": "node esbuild.mjs --watch",
+    "build": "node esbuild.mjs",
+    "prepare": "node esbuild.mjs"
+  },
+  "devDependencies": {
+    "coc.nvim": "^0.0.83-next.18",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.3"
+  },
+  "activationEvents": [
+    "onLanguage:logstash"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "logstash",
+        "aliases": [
+          "Logstash",
+          "logstash"
+        ],
+        "filenamePatterns": [
+          "*logstash.conf",
+          "*logstash.conf.j2",
+          "*logstash.conf.template",
+          "logstash-*.conf"
+        ]
+      }
+    ],
+    "configuration": [
+      {
+        "title": "Logstash",
+        "properties": {
+          "logstash.version": {
+            "type": "string",
+            "enum": [
+              "6.8",
+              "7.17",
+              "8.14",
+              "8.19",
+              "latest"
+            ],
+            "default": "latest",
+            "description": "Logstash Version",
+            "scope": "resource"
+          },
+          "logstash.enableDefaultVSCodeCompletion": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable default completion for Logstash configuration files"
+          },
+          "coc-logstash.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable coc-logstash-editor extension"
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "category": "Logstash",
+        "command": "config.commands.setLogstashVersion",
+        "title": "Set Logstash Version"
+      }
+    ]
+  }
+}
