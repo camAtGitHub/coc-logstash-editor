@@ -1,0 +1,69 @@
+{
+  "name": "coc-logstash",
+  "version": "1.0.0",
+  "description": "Logstash pipeline config completion, hover and formatting for coc.nvim",
+  "author": "coc-logstash contributors",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "keywords": [
+    "coc.nvim",
+    "logstash",
+    "filebeat",
+    "elasticsearch",
+    "completion"
+  ],
+  "engines": {
+    "coc": ">=0.0.80"
+  },
+  "scripts": {
+    "watch": "node esbuild.mjs --watch",
+    "build": "node esbuild.mjs",
+    "prepare": "node esbuild.mjs"
+  },
+  "devDependencies": {
+    "@chemzqm/tsconfig": "*",
+    "coc.nvim": "^0.0.82",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.3"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "coc-logstash",
+      "properties": {
+        "coc-logstash.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable coc-logstash extension"
+        },
+        "logstash.version": {
+          "type": "string",
+          "enum": [
+            "6.8",
+            "7.17",
+            "8.14",
+            "8.19",
+            "latest"
+          ],
+          "default": "latest",
+          "description": "Logstash version for completions and documentation"
+        },
+        "logstash.enableDefaultVSCodeCompletion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show built-in coc completion items alongside logstash completions"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "config.commands.setLogstashVersion",
+        "title": "Set Logstash Version",
+        "category": "Logstash"
+      }
+    ]
+  }
+}
